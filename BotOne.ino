@@ -1,3 +1,5 @@
+// Motion/Sensor test platform - Arduino Uno R3
+
 #include <Adafruit_LSM303_U.h>
 #include <Adafruit_Sensor.h>
 #include <Wire.h>
