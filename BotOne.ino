@@ -46,6 +46,7 @@ const int servoSensorDelay = 0;
 const int minIRObstacleDistance = 350; // millimeters
 const int irSampleSize = 10;
 const float headingPrecision = 5.0;
+const int tolerance = 10; // ABS(speed) below this value do not induce motion
 
 
 //----------------------------- BEGIN IR Sensor GP2Y0A02YK Readout functions ---------------------------
@@ -76,6 +77,8 @@ class Bot {
     int irObstacleDistance;
     Servo servoLeft, servoRight, servoSensor;
     Bot();
+    void setLinearSpeed(int linearSpeed);
+    void setTurnSpeed(int turnSpeed);
     /* ------------------------- Ramping version of movement primitives ------------------------- */
     void rampFwd(int time);
     void rampBack(int time);
@@ -116,6 +119,24 @@ Bot::Bot() {
     pinMode(whiskerLeftIndicatorPin, OUTPUT);
     pinMode(whiskerRightIndicatorPin, OUTPUT);
   }
+}
+// @TODO - because both turns and linear motion use the same servos, turns interrupt motion;
+//         Need to create a smooth turn function slowing one of the wheels instead of fwd/rev
+void Bot::setLinearSpeed(int linearSpeed) { //needs to be in -100 to 100 range
+  if (abs(linearSpeed) < tolerance) {
+    standStill();
+  } else if (linearSpeed <= 100 || linearSpeed >= -100) {
+    servoLeft.writeMicroseconds(standStillMicros + linearSpeed);
+    servoRight.writeMicroseconds(standStillMicros - linearSpeed);
+  } 
+}
+void Bot::setTurnSpeed(int turnSpeed) {
+  if (abs(turnSpeed) < tolerance) {
+    //standStill();
+  } else if (turnSpeed <= 100 || turnSpeed >= -100) {
+    servoLeft.writeMicroseconds(standStillMicros + turnSpeed);
+    servoRight.writeMicroseconds(standStillMicros + turnSpeed);
+  } 
 }
 //--------------------------------------RAMP FWD/BACK -----------------------------------------//
 void Bot::rampFwd(int time) {
@@ -453,12 +474,11 @@ void loop() {
       if (debug > 3) {
         Serial.print("Received I/O Sample from: ");
         Serial.println(ioSample.getRemoteAddress16(), HEX);  
-  
         Serial.print("Sample size is ");
         Serial.println(ioSample.getSampleSize(), DEC);
-  
+        
         if (ioSample.containsAnalog())  Serial.println("Sample contains analog data");
-        if (ioSample.containsDigital()) Serial.println("Sample contains digital data");
+        //if (ioSample.containsDigital()) Serial.println("Sample contains digital data");
         for (int k = 0; k < ioSample.getSampleSize(); k++) {
           Serial.print("Sample "); 
           Serial.print(k + 1, DEC);   
@@ -482,10 +502,10 @@ void loop() {
           }
         }
       }
-      if(ioSample.containsAnalog()) {
+      if(ioSample.isAnalogEnabled(0)) {
         xV = ioSample.getAnalog(0, 0); //analog value index, sample index
         yV = ioSample.getAnalog(1, 0);
-        Serial.print("x = "); Serial.print(xV); Serial.print("; y = "); Serial.println(yV);
+        //Serial.print("x = "); Serial.print(xV); Serial.print("; y = "); Serial.println(yV);
       }
     } else if (debug > 1) {
       Serial.print("Expected I/O Sample, got ");
@@ -495,8 +515,11 @@ void loop() {
     Serial.print("Error reading packet - code: ");
     Serial.println(xbee.getResponse().getErrorCode());
   }
-  
-  
+  int linearSpeed = map(yV, 530, 0, -100, 100);
+  int turnSpeed = map(xV, 10, 520, -100, 100);
+  Serial.print("turnSpeed = "); Serial.print(turnSpeed); Serial.print("; linearSpeed = "); Serial.println(linearSpeed);
+  me->setLinearSpeed(linearSpeed);
+  me->setTurnSpeed(turnSpeed);
 /*  
   if (debug > 0) {
     Serial.print("loop: ");
