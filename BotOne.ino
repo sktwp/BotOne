@@ -5,24 +5,35 @@
 #include <Wire.h>
 #include <SoftwareSerial.h>
 #include <Servo.h>
+#include <XBee.h>
 #include "pitches.h"
 
 #define STAND_STILL_MICROS 1500
+#define SERIAL_BAUD 57600
+#define HAS_WHISKERS
 
 const float Pi = 3.14159;
+const int debug = 3;   // debug level. 1 is basic/info; 3 is details from within loops
 
 #ifndef BOT_H_
 #define BOT_H_
 
-const int piezoSpeakerPin = 4;
-const int whiskerLeftPin = 5;
-const int whiskerRightPin = 7;
-const int whiskerLeftIndicatorPin = 8;
-const int whiskerRightIndicatorPin = 2;
-const int servoSensorPin = 10;
-const int servoLeftPin = 11;
-const int servoRightPin = 12;
+const bool hasWhiskers = false; // whether whiskers are on or not;
+
+const uint8_t piezoSpeakerPin = 4;
+
+// Only needed if Bot has whiskers
+const uint8_t whiskerLeftPin = 5;
+const uint8_t whiskerRightPin = 7;
+const uint8_t whiskerLeftIndicatorPin = 8;
+const uint8_t whiskerRightIndicatorPin = 2;
+
+const uint8_t servoSensorPin = 10;
+const uint8_t servoLeftPin = 11;
+const uint8_t servoRightPin = 12;
 const uint8_t irSensorPin = A0;
+const uint8_t ssRX = 3; //Soft Serial RX Pin
+const uint8_t ssTX = 2; //SoftSerial TX Pin
 
 const int rampIncrement = 5;
 
@@ -36,7 +47,6 @@ const int minIRObstacleDistance = 350; // millimeters
 const int irSampleSize = 10;
 const float headingPrecision = 5.0;
 
-const int debug = 3;   // debug level. 1 is basic/info; 3 is details from within loops
 
 //----------------------------- BEGIN IR Sensor GP2Y0A02YK Readout functions ---------------------------
 // Convert IR Sensor GP2Y0A02YK Voltage read to millimeters
@@ -50,6 +60,11 @@ int irAvgDistance(int numSamples) {
   return convertIRvoltsToMM(irSum / float(numSamples));
 }
 //----------------------------- END IR Sensor GP2Y0A02YK Readout functions -----------------------------
+
+/*
+int packet[32];
+SoftwareSerial Serial1(ssRX, ssTX);
+*/
 
 
 class Bot {
@@ -95,6 +110,12 @@ Bot::Bot() {
   servoSensorPosition = 90;
   servoSensorPositionOld = 90;
   pinMode(irSensorPin, INPUT);
+  if(hasWhiskers) {
+    pinMode(whiskerLeftPin, INPUT);
+    pinMode(whiskerRightPin, INPUT);
+    pinMode(whiskerLeftIndicatorPin, OUTPUT);
+    pinMode(whiskerRightIndicatorPin, OUTPUT);
+  }
 }
 //--------------------------------------RAMP FWD/BACK -----------------------------------------//
 void Bot::rampFwd(int time) {
@@ -267,23 +288,26 @@ void Bot::updateSensors() {
   }
   
   // Update Whisker sensor states
-  whiskerLeftState = digitalRead(whiskerLeftPin);
-  whiskerRightState = digitalRead(whiskerRightPin);
-  if (whiskerLeftState == 0) {
-    digitalWrite(whiskerLeftIndicatorPin, HIGH);
-    obstacleLeft = true;
-    if (debug > 0) Serial.println("Obstacle on Left encountered!");
-  } else {
-    digitalWrite(whiskerLeftIndicatorPin, LOW);
-    obstacleLeft = false;
-  }
-  if (whiskerRightState == 0) {
-    digitalWrite(whiskerRightIndicatorPin, HIGH);
-    obstacleRight = true;
-    if (debug > 0) Serial.println("Obstacle on Right encountered!");
-  } else {
-    digitalWrite(whiskerRightIndicatorPin, LOW);
-    obstacleRight = false;
+  // @TODO - replace polling with interrupts - digital pin 2,3 for Uno
+  if (hasWhiskers) {
+    whiskerLeftState = digitalRead(whiskerLeftPin);
+    whiskerRightState = digitalRead(whiskerRightPin);
+    if (whiskerLeftState == 0) {
+      digitalWrite(whiskerLeftIndicatorPin, HIGH);
+      obstacleLeft = true;
+      if (debug > 0) Serial.println("Obstacle on Left encountered!");
+    } else {
+      digitalWrite(whiskerLeftIndicatorPin, LOW);
+      obstacleLeft = false;
+    }
+    if (whiskerRightState == 0) {
+      digitalWrite(whiskerRightIndicatorPin, HIGH);
+      obstacleRight = true;
+      if (debug > 0) Serial.println("Obstacle on Right encountered!");
+    } else {
+      digitalWrite(whiskerRightIndicatorPin, LOW);
+      obstacleRight = false;
+    }
   }
 }
 bool Bot::obstaclePresent() { return obstacleLeft || obstacleRight || irObstacle; }
@@ -318,8 +342,32 @@ void Bot::moveServoSensor(int degreePosition) {
   }
 }
 
-#endif /* BOT_H_ */
+#endif // BOT_H_ 
 
+/*
+#ifndef XBEE_H_
+#define XBEE_H_
+
+int readByte() {
+  while (true) {
+    if (Serial1.available() > 0) {
+      return Serial1.read();
+    }
+  }
+}
+void printPacket(int l) {
+  for(int i=0;i<l;i++) {
+    if (packet[i] < 0xF) {
+      // print leading zero for single digit values
+      Serial.print(0);
+    }
+    Serial.print(packet[i], HEX);
+    Serial.print(" ");
+  }
+  Serial.println("");
+}
+#endif // XBEE_H_ 
+*/
 
 
 void startupChime() {
@@ -333,11 +381,16 @@ void startupChime() {
   }
 }
 
-Bot *me;
-/* Assign a unique ID to magnetometer */
-Adafruit_LSM303_Mag_Unified mag = Adafruit_LSM303_Mag_Unified(12345);
 
-void displaySensorDetails(void) {
+
+
+Bot *me;
+Adafruit_LSM303_Mag_Unified mag = Adafruit_LSM303_Mag_Unified(12345); // Assign a unique ID to magnetometer
+SoftwareSerial Serial1(ssRX, ssTX);
+XBee xbee = XBee();
+Rx16IoSampleResponse ioSample = Rx16IoSampleResponse();
+
+void displayLSM303Details(void) {
   sensor_t sensor;
   mag.getSensor(&sensor);
   Serial.println("------------------------------------");
@@ -367,20 +420,19 @@ void setup() {
   // put your setup code here, to run once:
   startupChime(); // Play at startup to detect brownouts
   me = new Bot();
-  pinMode(whiskerLeftPin, INPUT);
-  pinMode(whiskerRightPin, INPUT);
-  pinMode(whiskerLeftIndicatorPin, OUTPUT);
-  pinMode(whiskerRightIndicatorPin, OUTPUT);
-  Serial.begin(9600);
+  
+  Serial.begin(SERIAL_BAUD); // Terminal
+  Serial1.begin(SERIAL_BAUD); // xBee
+  xbee.setSerial(Serial1);
   
   Serial.println("Magnetometer Test"); Serial.println("");
   mag.enableAutoRange(true); /* Enable auto-gain */
   if(!mag.begin()) /* Initialise the sensor */
   {
-    Serial.println("Ooops, no LSM303 detected ... Check your wiring!");
+    Serial.println("No LSM303 detected");
     while(1);
   }
-  displaySensorDetails();
+  displayLSM303Details();
 
 }
 
@@ -388,12 +440,64 @@ void setup() {
 int loopCounter = 1;
 int maxLoop = 1;
 int pos;
+int xV, yV; // x and y values read from remote control joystick via xBee
 
 void loop() {
   // Punctuate the loop execution with Serial input, please enter integers 0-180 only
   //while (Serial.available() == 0);
   //pos = Serial.parseInt();
+  xbee.readPacket();
+  if (xbee.getResponse().isAvailable()) {
+    if (xbee.getResponse().getApiId() == RX_16_IO_RESPONSE) {
+      xbee.getResponse().getRx16IoSampleResponse(ioSample);
+      if (debug > 3) {
+        Serial.print("Received I/O Sample from: ");
+        Serial.println(ioSample.getRemoteAddress16(), HEX);  
   
+        Serial.print("Sample size is ");
+        Serial.println(ioSample.getSampleSize(), DEC);
+  
+        if (ioSample.containsAnalog())  Serial.println("Sample contains analog data");
+        if (ioSample.containsDigital()) Serial.println("Sample contains digital data");
+        for (int k = 0; k < ioSample.getSampleSize(); k++) {
+          Serial.print("Sample "); 
+          Serial.print(k + 1, DEC);   
+          Serial.println(":");    
+          
+          for (int i = 0; i <= 5; i++) {
+            if (ioSample.isAnalogEnabled(i)) {
+              Serial.print("Analog (AI");
+              Serial.print(i, DEC);
+              Serial.print(") is ");
+              Serial.println(ioSample.getAnalog(i, k));  
+            }
+          }
+          for (int i = 0; i <= 8; i++) {
+            if (ioSample.isDigitalEnabled(i)) {
+              Serial.print("Digtal (DI");
+              Serial.print(i, DEC);
+              Serial.print(") is ");
+              Serial.println(ioSample.isDigitalOn(i, k));
+            }
+          }
+        }
+      }
+      if(ioSample.containsAnalog()) {
+        xV = ioSample.getAnalog(0, 0); //analog value index, sample index
+        yV = ioSample.getAnalog(1, 0);
+        Serial.print("x = "); Serial.print(xV); Serial.print("; y = "); Serial.println(yV);
+      }
+    } else if (debug > 1) {
+      Serial.print("Expected I/O Sample, got ");
+      Serial.println(xbee.getResponse().getApiId(), HEX);
+    }
+  } else if (xbee.getResponse().isError() && debug > 3) {
+    Serial.print("Error reading packet - code: ");
+    Serial.println(xbee.getResponse().getErrorCode());
+  }
+  
+  
+/*  
   if (debug > 0) {
     Serial.print("loop: ");
     Serial.println(loopCounter++);
@@ -408,7 +512,7 @@ void loop() {
   
   me->turnRight(90);
   delay(5000);
-  
+ */ 
 }
 
 
