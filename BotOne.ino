@@ -62,10 +62,6 @@ int irAvgDistance(int numSamples) {
 }
 //----------------------------- END IR Sensor GP2Y0A02YK Readout functions -----------------------------
 
-/*
-int packet[32];
-SoftwareSerial Serial1(ssRX, ssTX);
-*/
 
 
 class Bot {
@@ -78,7 +74,7 @@ class Bot {
     Servo servoLeft, servoRight, servoSensor;
     Bot();
     void setLinearSpeed(int linearSpeed);
-    void setTurnSpeed(int turnSpeed);
+    void setTurnSpeed(int turnSpeed, int linearSpeed);
     /* ------------------------- Ramping version of movement primitives ------------------------- */
     void rampFwd(int time);
     void rampBack(int time);
@@ -97,6 +93,7 @@ class Bot {
     bool obstaclePresent();
     void updateIndicators();
     void moveServoSensor(int positionDegrees);
+    void startupChime();
 };
 //-------------------------------------- BOT CONSTRUCTOR -----------------------------------------//
 Bot::Bot() {
@@ -120,8 +117,7 @@ Bot::Bot() {
     pinMode(whiskerRightIndicatorPin, OUTPUT);
   }
 }
-// @TODO - because both turns and linear motion use the same servos, turns interrupt motion;
-//         Need to create a smooth turn function slowing one of the wheels instead of fwd/rev
+
 void Bot::setLinearSpeed(int linearSpeed) { //needs to be in -100 to 100 range
   if (abs(linearSpeed) < tolerance) {
     standStill();
@@ -130,12 +126,17 @@ void Bot::setLinearSpeed(int linearSpeed) { //needs to be in -100 to 100 range
     servoRight.writeMicroseconds(standStillMicros - linearSpeed);
   } 
 }
-void Bot::setTurnSpeed(int turnSpeed) {
-  if (abs(turnSpeed) < tolerance) {
-    //standStill();
-  } else if (turnSpeed <= 100 || turnSpeed >= -100) {
+// Because both turns and linear motion use the same servos, needed to create a smooth turn function
+// slowing one of the wheels, so turns take linear motion into account
+void Bot::setTurnSpeed(int turnSpeed, int linearSpeed) {
+  if (abs(linearSpeed) < tolerance && (turnSpeed <= 100 || turnSpeed >= -100)) {
+    // Turning from stationary position - take control of servos
     servoLeft.writeMicroseconds(standStillMicros + turnSpeed);
     servoRight.writeMicroseconds(standStillMicros + turnSpeed);
+  } else if (turnSpeed <= 100 || turnSpeed >= -100) {
+    // Turning while moving
+    servoLeft.writeMicroseconds(standStillMicros + linearSpeed + turnSpeed);
+    servoRight.writeMicroseconds(standStillMicros - linearSpeed + turnSpeed);
   } 
 }
 //--------------------------------------RAMP FWD/BACK -----------------------------------------//
@@ -362,36 +363,7 @@ void Bot::moveServoSensor(int degreePosition) {
     Serial.println(degreePosition);
   }
 }
-
-#endif // BOT_H_ 
-
-/*
-#ifndef XBEE_H_
-#define XBEE_H_
-
-int readByte() {
-  while (true) {
-    if (Serial1.available() > 0) {
-      return Serial1.read();
-    }
-  }
-}
-void printPacket(int l) {
-  for(int i=0;i<l;i++) {
-    if (packet[i] < 0xF) {
-      // print leading zero for single digit values
-      Serial.print(0);
-    }
-    Serial.print(packet[i], HEX);
-    Serial.print(" ");
-  }
-  Serial.println("");
-}
-#endif // XBEE_H_ 
-*/
-
-
-void startupChime() {
+void Bot::startupChime() {
   int pin = piezoSpeakerPin;
   int duration = 300;
   int chord[] {NOTE_G5, NOTE_C5, NOTE_E5};
@@ -402,11 +374,15 @@ void startupChime() {
   }
 }
 
+  
+
+#endif // BOT_H_ 
 
 
+//======================================== INITIALIZATION ============================================
 
 Bot *me;
-Adafruit_LSM303_Mag_Unified mag = Adafruit_LSM303_Mag_Unified(12345); // Assign a unique ID to magnetometer
+Adafruit_LSM303_Mag_Unified mag = Adafruit_LSM303_Mag_Unified(8780); // Assign a unique ID to magnetometer
 SoftwareSerial Serial1(ssRX, ssTX);
 XBee xbee = XBee();
 Rx16IoSampleResponse ioSample = Rx16IoSampleResponse();
@@ -437,10 +413,10 @@ int getHeading() {
   return int(heading);
 }
 
+//======================================== SETUP() ============================================
 void setup() {
-  // put your setup code here, to run once:
-  startupChime(); // Play at startup to detect brownouts
   me = new Bot();
+  me->startupChime(); // Play at startup to detect brownouts
   
   Serial.begin(SERIAL_BAUD); // Terminal
   Serial1.begin(SERIAL_BAUD); // xBee
@@ -458,6 +434,7 @@ void setup() {
 }
 
 
+//======================================== LOOP() ============================================
 int loopCounter = 1;
 int maxLoop = 1;
 int pos;
@@ -519,7 +496,7 @@ void loop() {
   int turnSpeed = map(xV, 10, 520, -100, 100);
   Serial.print("turnSpeed = "); Serial.print(turnSpeed); Serial.print("; linearSpeed = "); Serial.println(linearSpeed);
   me->setLinearSpeed(linearSpeed);
-  me->setTurnSpeed(turnSpeed);
+  me->setTurnSpeed(turnSpeed, linearSpeed);
 /*  
   if (debug > 0) {
     Serial.print("loop: ");
