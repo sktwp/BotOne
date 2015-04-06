@@ -14,7 +14,7 @@
 #define MAGNETOMETER_ID 8780
 
 const float Pi = 3.14159;
-const int debug = 3;   // debug level. 1 is basic/info; 3 is details from within loops
+const int debug = 2;   // debug level. 1 is basic/info; 3 is details from within loops
 
 #ifndef BOT_H_
 #define BOT_H_
@@ -42,12 +42,14 @@ const int servoPulseMillis = 20;
 const int standStillMicros = 1500;
 const int fullSpeedClockwiseMicros = 1400;
 const int fullSpeedCounterClockwiseMicros = 1600;
+const int slowSpeedClockwiseMicros = 1470;
+const int slowSpeedCounterClockwiseMicros = 1530;
 const int maxSpeedChg = 100;
 const int servoSensorDelay = 0;
 const int minIRObstacleDistance = 350; // millimeters
 const int irSampleSize = 10;
 const float headingPrecision = 5.0;
-const int tolerance = 10; // ABS(speed) below this value do not induce motion
+const int tolerance = 10; // ABS(speed) below this value do not induce motion, also deg for turns
 
 
 //----------------------------- BEGIN IR Sensor GP2Y0A02YK Readout functions ---------------------------
@@ -106,7 +108,7 @@ Bot::Bot() {
   if (debug > 1) Serial.println("Magnetometer Test");
   mag.enableAutoRange(true); /* Enable auto-gain */
   if (!mag.begin()) Serial.println("No LSM303 detected"); /* Initialise the sensor */
-  if (debug > 1) displayLSM303Details();
+
   
   //servoSensor.attach(servoSensorPin);
   servoLeft.attach(servoLeftPin);
@@ -128,7 +130,7 @@ Bot::Bot() {
     pinMode(whiskerRightIndicatorPin, OUTPUT);
   }
 }
-
+//-------------------------------------- LINEAR AND TURN SPEED -------------------------------//
 void Bot::setLinearSpeed(int linearSpeed) { //needs to be in -100 to 100 range
   if (abs(linearSpeed) < tolerance) {
     standStill();
@@ -199,25 +201,6 @@ void Bot::rampBack(int time) {
     delay(servoPulseMillis);
   }
 }
-//----------------------------------------RAMP TURN METHODS-----------------------------------------//
-void Bot::rampRight(int deg) {
-  for (int speedChg = 0; speedChg <= 100; speedChg += rampIncrement) {
-    servoLeft.writeMicroseconds(standStillMicros - speedChg);
-    servoRight.writeMicroseconds(standStillMicros - speedChg);
-    delay(servoPulseMillis);
-  }
-  int turnTime = map(deg, 0, 180, 0, 1500 - 100 / rampIncrement);
-  delay(turnTime);
-}
-void Bot::rampLeft(int deg) {
-  for (int speedChg = 0; speedChg <= 100; speedChg += rampIncrement) {
-    servoLeft.writeMicroseconds(standStillMicros + speedChg);
-    servoRight.writeMicroseconds(standStillMicros + speedChg);
-    delay(servoPulseMillis);
-  }
-  int turnTime = map(deg, 0, 180, 0, 1600 - 100 / rampIncrement);
-  delay(turnTime);
-}
 //--------------------------------------NON-RAMP FWD/BACK/STILL -----------------------------------------//
 void Bot::standStill() {
   servoLeft.writeMicroseconds(standStillMicros);
@@ -243,45 +226,58 @@ void Bot::fullSpeedBack(int time) {
   servoRight.writeMicroseconds(fullSpeedCounterClockwiseMicros);
   delay(time);
 }
-//----------------------------------------NON-RAMP TURN METHODS-----------------------------------------//
+//----------------------------------------RAMP TURN METHODS-----------------------------------------//
+void Bot::rampRight(int deg) {
+  for (int speedChg = 0; speedChg <= 100; speedChg += rampIncrement) {
+    servoLeft.writeMicroseconds(standStillMicros - speedChg);
+    servoRight.writeMicroseconds(standStillMicros - speedChg);
+    delay(servoPulseMillis);
+  }
+  int turnTime = map(deg, 0, 180, 0, 1500 - 100 / rampIncrement);
+  delay(turnTime);
+}
+void Bot::rampLeft(int deg) {
+  for (int speedChg = 0; speedChg <= 100; speedChg += rampIncrement) {
+    servoLeft.writeMicroseconds(standStillMicros + speedChg);
+    servoRight.writeMicroseconds(standStillMicros + speedChg);
+    delay(servoPulseMillis);
+  }
+  int turnTime = map(deg, 0, 180, 0, 1600 - 100 / rampIncrement);
+  delay(turnTime);
+}
+
+//---------------------------------------- MAG HEADING-BASED TURN METHODS------------------//
 void Bot::turnRight(int deg) {
   int originalHeading = getHeading();
   int targetHeading = (originalHeading + deg) % 360;
   if (debug > 0) {
-    Serial.print("Initiate TURN RIGHT: ");
-    Serial.print(deg);
-    Serial.print(";   Old heading: ");
-    Serial.print(originalHeading);
-    Serial.print(";   Target heading: ");
-    Serial.println(targetHeading);
+    Serial.print("Initiate TURN RIGHT: "); Serial.print(deg);
+    Serial.print(";   Old heading: "); Serial.print(originalHeading);
+    Serial.print(";   Target heading: "); Serial.println(targetHeading);
   }
-  if (originalHeading < targetHeading) { // not crossing 359->0 boundary
-    while (getHeading() < targetHeading) {
-      if (debug > 2) Serial.println(getHeading());
-      servoLeft.writeMicroseconds(fullSpeedCounterClockwiseMicros);
-      servoRight.writeMicroseconds(fullSpeedCounterClockwiseMicros);
-      delay(servoPulseMillis);
-    }
-  } else if (originalHeading > targetHeading) {
-    while (getHeading() > targetHeading) { //only works until it hits 0
-      if (debug > 2) Serial.println(getHeading());
-      servoLeft.writeMicroseconds(fullSpeedCounterClockwiseMicros);
-      servoRight.writeMicroseconds(fullSpeedCounterClockwiseMicros);
-      delay(servoPulseMillis);
-    }
-    turnRight(targetHeading); //remainder of the turn after hitting 0
+  while (abs(getHeading() - targetHeading) > tolerance) {
+    if (debug > 1) { Serial.print("headingDiff: "); Serial.println(abs(getHeading() - targetHeading)); }
+    servoLeft.writeMicroseconds(slowSpeedCounterClockwiseMicros);
+    servoRight.writeMicroseconds(slowSpeedCounterClockwiseMicros);
+    delay(servoPulseMillis);
   }
   standStill();
 }
 void Bot::turnLeft(int deg) {
+  int originalHeading = getHeading();
+  int targetHeading = (originalHeading + deg) % 360;
   if (debug > 0) {
-    Serial.print("Initiate TURN LEFT: ");
-    Serial.println(deg);
+    Serial.print("Initiate TURN LEFT: "); Serial.print(deg);
+    Serial.print(";   Old heading: "); Serial.print(originalHeading);
+    Serial.print(";   Target heading: "); Serial.println(targetHeading);
   }
-  servoLeft.writeMicroseconds(fullSpeedClockwiseMicros);
-  servoRight.writeMicroseconds(fullSpeedClockwiseMicros);
-  int turnTime = map(deg, 0, 180, 0, standStillMicros);
-  delay(turnTime);
+  while (abs(getHeading() - targetHeading) > tolerance || abs(getHeading() - targetHeading) < 360 - tolerance) {
+    if (debug > 1) { Serial.print("headingDiff: "); Serial.println(abs(getHeading() - targetHeading)); }
+    servoLeft.writeMicroseconds(slowSpeedClockwiseMicros);
+    servoRight.writeMicroseconds(slowSpeedClockwiseMicros);
+    delay(servoPulseMillis);
+  }
+  standStill();
 }
 //---------------------------------------------MOTION UPDATE-----------------------------------------//
 void Bot::updateMotion() {
@@ -394,7 +390,7 @@ int Bot::getHeading() {
   mag.getEvent(&event);
   float heading = (atan2(event.magnetic.y,event.magnetic.x) * 180) / Pi; // Calculate the angle of the vector y,x
   if (heading < 0) heading = 360 + heading;  // Normalize to 0-360
-  if (debug > 1) {
+  if (debug > 4) {
     Serial.print("Compass Heading: ");
     Serial.println(int(heading)); 
   }
@@ -484,6 +480,7 @@ void setup() {
   Serial.begin(SERIAL_BAUD); // Terminal
   Serial1.begin(SERIAL_BAUD); // xBee
   xbee.setSerial(Serial1);
+  if (debug > 1) bot->displayLSM303Details();
 
 }
 
@@ -506,9 +503,9 @@ void loop() {
   bot->setTurnSpeed(turnSpeed, linearSpeed);
   bot->updateSensors();
   if (bot->irObstacleDistance < 300) {
-    tone(piezoSpeakerPin, map(bot->irObstacleDistance, 0, 300, 3000, 50), 100);
+    tone(piezoSpeakerPin, map(bot->irObstacleDistance, 0, 300, 3000, 50), 300); //pin, Hz, millis
     // @TODO - very rough test - replace later
-    bot->setTurnSpeed(60, linearSpeed); 
+    bot->turnRight(45);
   }
 
 }
