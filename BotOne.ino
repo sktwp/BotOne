@@ -11,6 +11,7 @@
 #define STAND_STILL_MICROS 1500
 #define SERIAL_BAUD 57600
 #define HAS_WHISKERS
+#define MAGNETOMETER_ID 8780
 
 const float Pi = 3.14159;
 const int debug = 3;   // debug level. 1 is basic/info; 3 is details from within loops
@@ -66,12 +67,14 @@ int irAvgDistance(int numSamples) {
 
 class Bot {
   public:
+    Adafruit_LSM303_Mag_Unified mag;
     int servoSensorPosition, servoSensorPositionOld;
     int servoLeftcurrentSpeed, servoRightCurrentSpeed;
     byte whiskerLeftState, whiskerRightState;
     bool obstacleLeft, obstacleRight, irObstacle, alreadyRampedFwd;
     int irObstacleDistance;
     Servo servoLeft, servoRight, servoSensor;
+    
     Bot();
     void setLinearSpeed(int linearSpeed);
     void setTurnSpeed(int turnSpeed, int linearSpeed);
@@ -93,11 +96,19 @@ class Bot {
     bool obstaclePresent();
     void updateIndicators();
     void moveServoSensor(int positionDegrees);
+    void displayLSM303Details();
+    int getHeading();
     void startupChime();
 };
 //-------------------------------------- BOT CONSTRUCTOR -----------------------------------------//
 Bot::Bot() {
-  servoSensor.attach(servoSensorPin);
+  mag = Adafruit_LSM303_Mag_Unified(MAGNETOMETER_ID);
+  if (debug > 1) Serial.println("Magnetometer Test");
+  mag.enableAutoRange(true); /* Enable auto-gain */
+  if (!mag.begin()) Serial.println("No LSM303 detected"); /* Initialise the sensor */
+  if (debug > 1) displayLSM303Details();
+  
+  //servoSensor.attach(servoSensorPin);
   servoLeft.attach(servoLeftPin);
   servoRight.attach(servoRightPin);
   servoLeftcurrentSpeed = standStillMicros;
@@ -363,31 +374,7 @@ void Bot::moveServoSensor(int degreePosition) {
     Serial.println(degreePosition);
   }
 }
-void Bot::startupChime() {
-  int pin = piezoSpeakerPin;
-  int duration = 300;
-  int chord[] {NOTE_G5, NOTE_C5, NOTE_E5};
-  for (unsigned int note = 0; note < (sizeof(chord) / sizeof(*chord)); note++) {
-    tone(pin, chord[note], duration); //pin, frequency, duration
-    delay(duration);
-    noTone(pin);
-  }
-}
-
-  
-
-#endif // BOT_H_ 
-
-
-//======================================== INITIALIZATION ============================================
-
-Bot *me;
-Adafruit_LSM303_Mag_Unified mag = Adafruit_LSM303_Mag_Unified(8780); // Assign a unique ID to magnetometer
-SoftwareSerial Serial1(ssRX, ssTX);
-XBee xbee = XBee();
-Rx16IoSampleResponse ioSample = Rx16IoSampleResponse();
-
-void displayLSM303Details(void) {
+void Bot::displayLSM303Details() {
   sensor_t sensor;
   mag.getSensor(&sensor);
   Serial.println("------------------------------------");
@@ -401,7 +388,8 @@ void displayLSM303Details(void) {
   Serial.println("");
   delay(500);
 }
-int getHeading() {
+
+int Bot::getHeading() {
   sensors_event_t event; 
   mag.getEvent(&event);
   float heading = (atan2(event.magnetic.y,event.magnetic.x) * 180) / Pi; // Calculate the angle of the vector y,x
@@ -412,43 +400,35 @@ int getHeading() {
   }
   return int(heading);
 }
-
-//======================================== SETUP() ============================================
-void setup() {
-  me = new Bot();
-  me->startupChime(); // Play at startup to detect brownouts
-  
-  Serial.begin(SERIAL_BAUD); // Terminal
-  Serial1.begin(SERIAL_BAUD); // xBee
-  xbee.setSerial(Serial1);
-  
-  Serial.println("Magnetometer Test"); Serial.println("");
-  mag.enableAutoRange(true); /* Enable auto-gain */
-  if(!mag.begin()) /* Initialise the sensor */
-  {
-    Serial.println("No LSM303 detected");
-    while(1);
+void Bot::startupChime() {
+  int pin = piezoSpeakerPin;
+  int duration = 300;
+  int chord[] {NOTE_G5, NOTE_C5, NOTE_E5};
+  for (unsigned int note = 0; note < (sizeof(chord) / sizeof(*chord)); note++) {
+    tone(pin, chord[note], duration); //pin, frequency, duration
+    delay(duration);
+    noTone(pin);
   }
-  displayLSM303Details();
-
 }
 
 
-//======================================== LOOP() ============================================
-int loopCounter = 1;
-int maxLoop = 1;
-int pos;
-int xV, yV; // x and y values read from remote control joystick via xBee
+#endif // BOT_H_ 
 
-void loop() {
-  // Punctuate the loop execution with Serial input, please enter integers 0-180 only
-  //while (Serial.available() == 0);
-  //pos = Serial.parseInt();
+//======================================== INITIALIZATION ============================================
+
+Bot *bot;
+SoftwareSerial Serial1(ssRX, ssTX);
+XBee xbee = XBee();
+Rx16IoSampleResponse ioSample = Rx16IoSampleResponse();
+
+//=========================================== XBEE HELPERS ======================================
+
+void updateJoystickValues(int *xV, int *yV) {
   xbee.readPacket();
   if (xbee.getResponse().isAvailable()) {
     if (xbee.getResponse().getApiId() == RX_16_IO_RESPONSE) {
       xbee.getResponse().getRx16IoSampleResponse(ioSample);
-      if (debug > 3) {
+      if (debug > 2) {
         Serial.print("Received I/O Sample from: ");
         Serial.println(ioSample.getRemoteAddress16(), HEX);  
         Serial.print("Sample size is ");
@@ -480,9 +460,9 @@ void loop() {
         }
       }
       if(ioSample.isAnalogEnabled(0)) {
-        xV = ioSample.getAnalog(0, 0); //analog value index, sample index
-        yV = ioSample.getAnalog(1, 0);
-        //Serial.print("x = "); Serial.print(xV); Serial.print("; y = "); Serial.println(yV);
+        (*xV) = ioSample.getAnalog(0, 0); //analog value index, sample index
+        (*yV) = ioSample.getAnalog(1, 0);
+        if (debug > 2) { Serial.print("x = "); Serial.print(*xV); Serial.print("; y = "); Serial.println(*yV); }
       }
     } else if (debug > 1) {
       Serial.print("Expected I/O Sample, got ");
@@ -492,27 +472,48 @@ void loop() {
     Serial.print("Error reading packet - code: ");
     Serial.println(xbee.getResponse().getErrorCode());
   }
+}
+
+
+
+//======================================== SETUP() ============================================
+void setup() {
+  bot = new Bot();
+  bot->startupChime(); // Play at startup to detect brownouts
+  
+  Serial.begin(SERIAL_BAUD); // Terminal
+  Serial1.begin(SERIAL_BAUD); // xBee
+  xbee.setSerial(Serial1);
+
+}
+
+//======================================== LOOP() ============================================
+int loopCounter = 1;
+int maxLoop = 1;
+int pos;
+int xV, yV; // x and y values read from remote control joystick via xBee
+
+void loop() {
+  updateJoystickValues(&xV, &yV);
+
   int linearSpeed = map(yV, 530, 0, -100, 100);
   int turnSpeed = map(xV, 10, 520, -100, 100);
-  Serial.print("turnSpeed = "); Serial.print(turnSpeed); Serial.print("; linearSpeed = "); Serial.println(linearSpeed);
-  me->setLinearSpeed(linearSpeed);
-  me->setTurnSpeed(turnSpeed, linearSpeed);
-/*  
-  if (debug > 0) {
-    Serial.print("loop: ");
-    Serial.println(loopCounter++);
+  if (debug > 2) {
+    Serial.print("turnSpeed = "); Serial.print(turnSpeed); 
+    Serial.print("; linearSpeed = "); Serial.println(linearSpeed);
   }
-  
-  // Code for testing the IR-sensor servo
-  //me->moveServoSensor(pos);
-  
-  //me->updateSensors();
-  //me->updateMotion();
-  //Serial.println(irAvgDistance(irSampleSize));
-  
-  me->turnRight(90);
-  delay(5000);
- */ 
+  bot->setLinearSpeed(linearSpeed);
+  bot->setTurnSpeed(turnSpeed, linearSpeed);
+  bot->updateSensors();
+  if (bot->irObstacleDistance < 300) {
+    tone(piezoSpeakerPin, map(bot->irObstacleDistance, 0, 300, 3000, 50), 100);
+    // @TODO - very rough test - replace later
+    bot->setTurnSpeed(60, linearSpeed); 
+  }
+
 }
+
+
+
 
 
