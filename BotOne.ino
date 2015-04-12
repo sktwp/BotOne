@@ -13,6 +13,7 @@
 #define HAS_WHISKERS
 #define MAGNETOMETER_ID 8780
 
+//======================================== GLOBALS ====================================================
 const float Pi = 3.14159;
 const int debug = 2;   // debug level. 1 is basic/info; 3 is details from within loops
 
@@ -50,6 +51,7 @@ const int minIRObstacleDistance = 350; // millimeters
 const int irSampleSize = 10;
 const float headingPrecision = 5.0;
 const int tolerance = 10; // ABS(speed) below this value do not induce motion, also deg for turns
+//======================================== END GLOBALS =================================================
 
 
 //----------------------------- BEGIN IR Sensor GP2Y0A02YK Readout functions ---------------------------
