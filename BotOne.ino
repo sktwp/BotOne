@@ -12,10 +12,11 @@
 #define SERIAL_BAUD 57600
 #define HAS_WHISKERS
 #define MAGNETOMETER_ID 8780
+#define ARDUINO_REMOTE
 
 //======================================== GLOBALS ====================================================
 const float Pi = 3.14159;
-const int debug = 2;   // debug level. 1 is basic/info; 3 is details from within loops
+const int debug = 3;   // debug level. 1 is basic/info; 3 is details from within loops
 
 #ifndef BOT_H_
 #define BOT_H_
@@ -417,42 +418,46 @@ void Bot::startupChime() {
 Bot *bot;
 SoftwareSerial Serial1(ssRX, ssTX);
 XBee xbee = XBee();
+XBeeResponse response = XBeeResponse();
+Rx16Response rx16 = Rx16Response();
 Rx16IoSampleResponse ioSample = Rx16IoSampleResponse();
+uint8_t xbeeRxOption = 0;
+uint8_t xbeeRxData[2];
 
 //=========================================== XBEE HELPERS ======================================
 
 void updateJoystickValues(int *xV, int *yV) {
   xbee.readPacket();
   if (xbee.getResponse().isAvailable()) {
-    if (xbee.getResponse().getApiId() == RX_16_IO_RESPONSE) {
+    if (xbee.getResponse().getApiId() == RX_16_RESPONSE) {
+      xbee.getResponse().getRx16Response(rx16);
+      xbeeRxOption = rx16.getOption();
+      xbeeRxData[0] = rx16.getData(0);
+      xbeeRxData[1] = rx16.getData(1);
+      (*xV) = xbeeRxData[0];
+      (*yV) = xbeeRxData[1];
+      if (debug > 2) {
+        Serial.print("xBee Rx Data: "); Serial.print(xbeeRxData[0]); Serial.print(", "); Serial.println(xbeeRxData[1]);
+      }  
+    }
+   #ifndef ARDUINO_REMOTE 
+    else if (xbee.getResponse().getApiId() == RX_16_IO_RESPONSE) {
       xbee.getResponse().getRx16IoSampleResponse(ioSample);
       if (debug > 2) {
-        Serial.print("Received I/O Sample from: ");
-        Serial.println(ioSample.getRemoteAddress16(), HEX);  
-        Serial.print("Sample size is ");
-        Serial.println(ioSample.getSampleSize(), DEC);
-        
+        Serial.print("Received I/O Sample from: "); Serial.println(ioSample.getRemoteAddress16(), HEX);  
+        Serial.print("Sample size is "); Serial.println(ioSample.getSampleSize(), DEC);
         if (ioSample.containsAnalog())  Serial.println("Sample contains analog data");
         //if (ioSample.containsDigital()) Serial.println("Sample contains digital data");
         for (int k = 0; k < ioSample.getSampleSize(); k++) {
-          Serial.print("Sample "); 
-          Serial.print(k + 1, DEC);   
-          Serial.println(":");    
-          
+          Serial.print("Sample "); Serial.print(k + 1, DEC); Serial.println(":");    
           for (int i = 0; i <= 5; i++) {
             if (ioSample.isAnalogEnabled(i)) {
-              Serial.print("Analog (AI");
-              Serial.print(i, DEC);
-              Serial.print(") is ");
-              Serial.println(ioSample.getAnalog(i, k));  
+              Serial.print("Analog (AI"); Serial.print(i, DEC); Serial.print(") is "); Serial.println(ioSample.getAnalog(i, k));  
             }
           }
           for (int i = 0; i <= 8; i++) {
             if (ioSample.isDigitalEnabled(i)) {
-              Serial.print("Digtal (DI");
-              Serial.print(i, DEC);
-              Serial.print(") is ");
-              Serial.println(ioSample.isDigitalOn(i, k));
+              Serial.print("Digtal (DI"); Serial.print(i, DEC); Serial.print(") is "); Serial.println(ioSample.isDigitalOn(i, k));
             }
           }
         }
@@ -463,12 +468,11 @@ void updateJoystickValues(int *xV, int *yV) {
         if (debug > 2) { Serial.print("x = "); Serial.print(*xV); Serial.print("; y = "); Serial.println(*yV); }
       }
     } else if (debug > 1) {
-      Serial.print("Expected I/O Sample, got ");
-      Serial.println(xbee.getResponse().getApiId(), HEX);
+      Serial.print("Expected I/O Sample, got "); Serial.println(xbee.getResponse().getApiId(), HEX);
     }
+    #endif
   } else if (xbee.getResponse().isError() && debug > 3) {
-    Serial.print("Error reading packet - code: ");
-    Serial.println(xbee.getResponse().getErrorCode());
+    Serial.print("Error reading packet - code: "); Serial.println(xbee.getResponse().getErrorCode());
   }
 }
 
@@ -495,8 +499,8 @@ int xV, yV; // x and y values read from remote control joystick via xBee
 void loop() {
   updateJoystickValues(&xV, &yV);
 
-  int linearSpeed = map(yV, 530, 0, -100, 100);
-  int turnSpeed = map(xV, 10, 520, -100, 100);
+  int linearSpeed = map(yV, 0, 255, -100, 100);
+  int turnSpeed   = map(xV, 0, 255, -100, 100);
   if (debug > 2) {
     Serial.print("turnSpeed = "); Serial.print(turnSpeed); 
     Serial.print("; linearSpeed = "); Serial.println(linearSpeed);
