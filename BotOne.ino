@@ -13,6 +13,8 @@
 #define HAS_WHISKERS
 #define MAGNETOMETER_ID 8780
 #define ARDUINO_REMOTE
+#define REMOTE_XBEE_16ADDR 0x0001
+#define OBSTACLE_AVOIDANCE_TURN 45 //degrees
 
 //======================================== GLOBALS ====================================================
 const float Pi = 3.14159;
@@ -416,13 +418,14 @@ void Bot::startupChime() {
 //======================================== INITIALIZATION ============================================
 
 Bot *bot;
-SoftwareSerial Serial1(ssRX, ssTX);
+SoftwareSerial xbeeSerial(ssRX, ssTX);
 XBee xbee = XBee();
 XBeeResponse response = XBeeResponse();
 Rx16Response rx16 = Rx16Response();
 Rx16IoSampleResponse ioSample = Rx16IoSampleResponse();
 uint8_t xbeeRxOption = 0;
 uint8_t xbeeRxData[2];
+String msg = "";
 
 //=========================================== XBEE HELPERS ======================================
 
@@ -437,7 +440,7 @@ void updateJoystickValues(int *xV, int *yV) {
       (*xV) = xbeeRxData[0];
       (*yV) = xbeeRxData[1];
       if (debug > 2) {
-        Serial.print("xBee Rx Data: "); Serial.print(xbeeRxData[0]); Serial.print(", "); Serial.println(xbeeRxData[1]);
+        msg = "xBee RFrx Data: "+ String(xbeeRxData[0]) + ", "+ String(xbeeRxData[1]); Serial.println(msg);
       }  
     }
    #ifndef ARDUINO_REMOTE 
@@ -447,45 +450,55 @@ void updateJoystickValues(int *xV, int *yV) {
         Serial.print("Received I/O Sample from: "); Serial.println(ioSample.getRemoteAddress16(), HEX);  
         Serial.print("Sample size is "); Serial.println(ioSample.getSampleSize(), DEC);
         if (ioSample.containsAnalog())  Serial.println("Sample contains analog data");
-        //if (ioSample.containsDigital()) Serial.println("Sample contains digital data");
+        if (ioSample.containsDigital()) Serial.println("Sample contains digital data");
         for (int k = 0; k < ioSample.getSampleSize(); k++) {
           Serial.print("Sample "); Serial.print(k + 1, DEC); Serial.println(":");    
           for (int i = 0; i <= 5; i++) {
-            if (ioSample.isAnalogEnabled(i)) {
-              Serial.print("Analog (AI"); Serial.print(i, DEC); Serial.print(") is "); Serial.println(ioSample.getAnalog(i, k));  
-            }
+            if (ioSample.isAnalogEnabled(i)) { msg = "Analog (AI") + String(i, DEC) + ") is " + String(ioSample.getAnalog(i, k)); Serial.println(msg); }
           }
           for (int i = 0; i <= 8; i++) {
-            if (ioSample.isDigitalEnabled(i)) {
-              Serial.print("Digtal (DI"); Serial.print(i, DEC); Serial.print(") is "); Serial.println(ioSample.isDigitalOn(i, k));
-            }
+            if (ioSample.isDigitalEnabled(i)) { msg = "Digtal (DI"+ String(i, DEC) + ") is "+ String(ioSample.isDigitalOn(i, k)); Serial.println(msg);}
           }
         }
       }
       if(ioSample.isAnalogEnabled(0)) {
         (*xV) = ioSample.getAnalog(0, 0); //analog value index, sample index
         (*yV) = ioSample.getAnalog(1, 0);
-        if (debug > 2) { Serial.print("x = "); Serial.print(*xV); Serial.print("; y = "); Serial.println(*yV); }
+        if (debug > 2) { msg = "x = " + String(*xV) + "; y = " + String(*yV); Serial.println(msg); }
       }
     } else if (debug > 1) {
       Serial.print("Expected I/O Sample, got "); Serial.println(xbee.getResponse().getApiId(), HEX);
     }
     #endif
   } else if (xbee.getResponse().isError() && debug > 3) {
-    Serial.print("Error reading packet - code: "); Serial.println(xbee.getResponse().getErrorCode());
+    Serial.print("Pkt read err: "); Serial.println(xbee.getResponse().getErrorCode());
   }
 }
 
-
+void sendToRemote(String msg) {
+  uint8_t payload[msg.length()];
+  msg.getBytes(payload, msg.length());
+  Tx16Request tx = Tx16Request(REMOTE_XBEE_16ADDR, payload, sizeof(payload));
+  TxStatusResponse txStatus = TxStatusResponse();
+  xbee.send(tx);
+  if (xbee.readPacket(200)) {
+    if (xbee.getResponse().getApiId() == TX_STATUS_RESPONSE) {
+      xbee.getResponse().getZBTxStatusResponse(txStatus);
+      if (txStatus.getStatus() == SUCCESS) Serial.println("SUCCESS");
+      else Serial.println("TX ERROR");
+    }
+  } else if (xbee.getResponse().isError()) {
+    Serial.print("Pkt read err: "); Serial.println(xbee.getResponse().getErrorCode());
+  }
+}
 
 //======================================== SETUP() ============================================
 void setup() {
   bot = new Bot();
   bot->startupChime(); // Play at startup to detect brownouts
-  
   Serial.begin(SERIAL_BAUD); // Terminal
-  Serial1.begin(SERIAL_BAUD); // xBee
-  xbee.setSerial(Serial1);
+  xbeeSerial.begin(SERIAL_BAUD); // xBee
+  xbee.setSerial(xbeeSerial);
   if (debug > 1) bot->displayLSM303Details();
 
 }
@@ -498,12 +511,11 @@ int xV, yV; // x and y values read from remote control joystick via xBee
 
 void loop() {
   updateJoystickValues(&xV, &yV);
-
   int linearSpeed = map(yV, 0, 255, -100, 100);
   int turnSpeed   = map(xV, 0, 255, -100, 100);
   if (debug > 2) {
-    Serial.print("turnSpeed = "); Serial.print(turnSpeed); 
-    Serial.print("; linearSpeed = "); Serial.println(linearSpeed);
+    msg = "turn:" + String(turnSpeed) + ";linear:"+ String(linearSpeed); Serial.println(msg);
+    sendToRemote(msg);
   }
   bot->setLinearSpeed(linearSpeed);
   bot->setTurnSpeed(turnSpeed, linearSpeed);
@@ -511,7 +523,9 @@ void loop() {
   if (bot->irObstacleDistance < 300) {
     tone(piezoSpeakerPin, map(bot->irObstacleDistance, 0, 300, 3000, 50), 300); //pin, Hz, millis
     // @TODO - very rough test - replace later
-    bot->turnRight(45);
+    msg = "obstacle:" + String(bot->irObstacleDistance) + "mm; turn " + OBSTACLE_AVOIDANCE_TURN + "deg";
+    sendToRemote(msg);
+    bot->turnRight(OBSTACLE_AVOIDANCE_TURN);
   }
 
 }
