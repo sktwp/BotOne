@@ -18,7 +18,7 @@
 
 //======================================== GLOBALS ====================================================
 const float Pi = 3.14159;
-const int debug = 3;   // debug level. 1 is basic/info; 3 is details from within loops
+const int debug = 2;   // debug level. 1 is basic/info; 3 is details from within loops
 
 #ifndef BOT_H_
 #define BOT_H_
@@ -426,20 +426,26 @@ Rx16IoSampleResponse ioSample = Rx16IoSampleResponse();
 uint8_t xbeeRxOption = 0;
 uint8_t xbeeRxData[2];
 String msg = "";
+unsigned long lastTransmission = millis();
 
 //=========================================== XBEE HELPERS ======================================
 
 void updateJoystickValues(int *xV, int *yV) {
   xbee.readPacket();
   if (xbee.getResponse().isAvailable()) {
-    if (xbee.getResponse().getApiId() == RX_16_RESPONSE) {
+    if (xbee.getResponse().getApiId() == TX_STATUS_RESPONSE) {
+      TxStatusResponse txStatus = TxStatusResponse();
+      xbee.getResponse().getZBTxStatusResponse(txStatus);
+      if (txStatus.getStatus() == SUCCESS && debug > 2) Serial.println("SUCCESS");
+      else if (txStatus.getStatus() != SUCCESS && debug > 0) Serial.println("TX ERROR");
+    } else if (xbee.getResponse().getApiId() == RX_16_RESPONSE) {
       xbee.getResponse().getRx16Response(rx16);
       xbeeRxOption = rx16.getOption();
       xbeeRxData[0] = rx16.getData(0);
       xbeeRxData[1] = rx16.getData(1);
       (*xV) = xbeeRxData[0];
       (*yV) = xbeeRxData[1];
-      if (debug > 2) {
+      if (debug > 1) {
         msg = "xBee RFrx Data: "+ String(xbeeRxData[0]) + ", "+ String(xbeeRxData[1]); Serial.println(msg);
       }  
     }
@@ -470,25 +476,18 @@ void updateJoystickValues(int *xV, int *yV) {
       Serial.print("Expected I/O Sample, got "); Serial.println(xbee.getResponse().getApiId(), HEX);
     }
     #endif
-  } else if (xbee.getResponse().isError() && debug > 3) {
+  } else if (xbee.getResponse().isError() && debug > 1) {
     Serial.print("Pkt read err: "); Serial.println(xbee.getResponse().getErrorCode());
   }
 }
 
-void sendToRemote(String msg) {
-  uint8_t payload[msg.length()];
-  msg.getBytes(payload, msg.length());
-  Tx16Request tx = Tx16Request(REMOTE_XBEE_16ADDR, payload, sizeof(payload));
-  TxStatusResponse txStatus = TxStatusResponse();
-  xbee.send(tx);
-  if (xbee.readPacket(200)) {
-    if (xbee.getResponse().getApiId() == TX_STATUS_RESPONSE) {
-      xbee.getResponse().getZBTxStatusResponse(txStatus);
-      if (txStatus.getStatus() == SUCCESS) Serial.println("SUCCESS");
-      else Serial.println("TX ERROR");
-    }
-  } else if (xbee.getResponse().isError()) {
-    Serial.print("Pkt read err: "); Serial.println(xbee.getResponse().getErrorCode());
+void sendToRemote(String msg, long transmissionInterval) {
+  if (millis() - lastTransmission > transmissionInterval) {
+    uint8_t payload[msg.length()];
+    msg.getBytes(payload, msg.length());
+    Tx16Request tx = Tx16Request(REMOTE_XBEE_16ADDR, payload, sizeof(payload));
+    xbee.send(tx);
+    lastTransmission = millis();
   }
 }
 
@@ -513,20 +512,22 @@ void loop() {
   updateJoystickValues(&xV, &yV);
   int linearSpeed = map(yV, 0, 255, -100, 100);
   int turnSpeed   = map(xV, 0, 255, -100, 100);
-  if (debug > 2) {
-    msg = "turn:" + String(turnSpeed) + ";linear:"+ String(linearSpeed); Serial.println(msg);
-    sendToRemote(msg);
+  if (debug > 0) {
+    msg = "turn:" + String(turnSpeed) + ";linear:"+ String(linearSpeed) + " "; Serial.println(msg);
+    sendToRemote(msg, 100);
   }
   bot->setLinearSpeed(linearSpeed);
   bot->setTurnSpeed(turnSpeed, linearSpeed);
+  /*
   bot->updateSensors();
   if (bot->irObstacleDistance < 300) {
     tone(piezoSpeakerPin, map(bot->irObstacleDistance, 0, 300, 3000, 50), 300); //pin, Hz, millis
     // @TODO - very rough test - replace later
     msg = "obstacle:" + String(bot->irObstacleDistance) + "mm; turn " + OBSTACLE_AVOIDANCE_TURN + "deg";
-    sendToRemote(msg);
+    sendToRemote(msg, 100);
     bot->turnRight(OBSTACLE_AVOIDANCE_TURN);
   }
+  */
 
 }
 

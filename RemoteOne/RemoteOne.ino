@@ -16,6 +16,7 @@
 #define XBEE_SHIELD
 #define SERIAL_BAUD 57600
 #define BOT_XBEE_16ADDR 0x0002
+#define LCD_BUFFER 40
 
 //======================================== GLOBALS ============================================
 // XBee's DOUT (TX) is connected to pin 2 (Arduino's Software RX)
@@ -81,27 +82,69 @@ String readInputState() {
   return msg;
 }
 
+
 //======================================== INITIALIZATION =====================================
 SoftwareSerial xbeeSerial(ssRX, ssTX); // RX, TX
 XBee xbee = XBee();
 LiquidTWI lcd(0);
 String msg = "";
+String msg1 = "";
+unsigned long lastLCDRefresh = millis();
+unsigned long lastTransmission = millis();
+//========================================  LCD HELPERS =======================================
+String bufferSpaces(String message) {
+  int len = LCD_BUFFER - message.length();
+  if (len < 0) return message.substring(0, LCD_BUFFER - 1);
+  String msg = message;
+  for (int i = 0; i < len; i++) msg += " ";
+  return msg;
+}
 
-//======================================== XBEE HELPERS =======================================
-void sendToBot(uint8_t* payload) {
-  Tx16Request tx = Tx16Request(BOT_XBEE_16ADDR, payload, sizeof(payload));
-  TxStatusResponse txStatus = TxStatusResponse();
-  xbee.send(tx);
-  if (xbee.readPacket(200)) {
-    if (xbee.getResponse().getApiId() == TX_STATUS_RESPONSE) {
-      xbee.getResponse().getZBTxStatusResponse(txStatus);
-      if (txStatus.getStatus() == SUCCESS) Serial.println("SUCCESS");
-      else Serial.println("TX ERROR");
-    }
-  } else if (xbee.getResponse().isError()) {
-    Serial.print("Pkt read err: "); Serial.println(xbee.getResponse().getErrorCode());
+void refreshLCD(String line0, String line1, bool clearLCD, long refreshInterval) {
+  if (millis() - lastLCDRefresh > refreshInterval) { 
+    if (clearLCD) lcd.clear();
+    // set the cursor to column 0, line 0 (note: line 1 is the second row, since counting begins with 0):
+    lcd.setCursor(0,0);
+    lcd.print(bufferSpaces(line0));
+    lcd.setCursor(0,1);
+    lcd.print(bufferSpaces(line1));
+    lastLCDRefresh = millis();
   }
 }
+//======================================== XBEE HELPERS =======================================
+void sendToBot(uint8_t* payload, long transmissionInterval) {
+  if (millis() - lastTransmission > transmissionInterval) {
+    Tx16Request tx = Tx16Request(BOT_XBEE_16ADDR, payload, sizeof(payload));
+    xbee.send(tx);
+    lastTransmission = millis();
+  }
+}
+void receiveFromBot(uint8_t* data, uint8_t* dataLength) {
+  //if (xbee.readPacket(100)) {
+    xbee.readPacket();
+    if (xbee.getResponse().isAvailable()) { 
+      if (xbee.getResponse().getApiId() == TX_STATUS_RESPONSE) {
+        TxStatusResponse txStatus = TxStatusResponse();
+        xbee.getResponse().getZBTxStatusResponse(txStatus);
+        if (txStatus.getStatus() == SUCCESS && debug > 2) Serial.println("SUCCESS");
+        else if (txStatus.getStatus() != SUCCESS && debug > 0) Serial.println("TX ERROR");
+      } else if (xbee.getResponse().getApiId() == RX_16_RESPONSE) {
+        XBeeResponse response = XBeeResponse();
+        Rx16Response rx16 = Rx16Response();
+        xbee.getResponse().getRx16Response(rx16);
+        uint8_t option = 0;
+        uint8_t xbeeRxData[rx16.getDataLength()];
+        if (debug > 2) { Serial.print("Rx Data Length: "); Serial.println(rx16.getDataLength()); }
+        option = rx16.getOption();
+        (*dataLength) = rx16.getDataLength();
+        for (int i = 0; i < rx16.getDataLength(); i++) data[i] = rx16.getData(i);
+      }
+    } else if (xbee.getResponse().isError()) {
+      if (debug > 0) { String msg = "Pkt read err: " + String(xbee.getResponse().getErrorCode()); Serial.println(msg); }
+    }
+  //}
+}
+
 //======================================== SETUP() ============================================
 void setup() {
   Serial.begin(SERIAL_BAUD);
@@ -109,10 +152,9 @@ void setup() {
   xbee.setSerial(xbeeSerial);
   setupJoystickShield();
   lcd.begin(20, 4);
-  lcd.setBacklight(LOW);  // LOW || HIGH || uint8_t
+  lcd.setBacklight(240);  // LOW || HIGH || uint8_t
   lcd.autoscroll();
   lcd.clear();
-  // set the cursor to column 0, line 1 (note: line 1 is the second row, since counting begins with 0):
   lcd.setCursor(0, 1);
   if (debug > 0) lcd.print("setup() complete");
   delay(500);
@@ -120,12 +162,30 @@ void setup() {
 
 //======================================== LOOP() ============================================
 void loop() {
-  if (debug > 1) Serial.println(readInputState());
+  if (debug > 3) Serial.println(readInputState());
   int xV = map(analogRead(PIN_ANALOG_X), 0, 1024, 0, 255);
-  int yV = map(analogRead(PIN_ANALOG_Y), 0, 1024, 0, 255);
+  int yV = map(analogRead(PIN_ANALOG_Y), 0, 1024, 0, 255); 
+  msg = "X:" + String(xV) + "; Y:" + String(yV);
+
+  
   uint8_t payload[2] = {xV, yV};
-  sendToBot(payload);
-  if (xbeeSerial.available()) lcd.print(xbeeSerial.read());
-  delay (200);
+  sendToBot(payload, 100);
+  
+  // @TODO - need to fix array size to be a function of reasonable payload
+  
+  uint8_t data[400]; 
+  uint8_t dataLength = 0;
+  receiveFromBot(data, &dataLength);
+  if (dataLength > 0) {
+    msg1 = "";
+    for (int i = 0; i < dataLength - 1; i++) {
+      char c = data[i];
+      msg1 += c;
+    } 
+    Serial.println(msg);
+    Serial.println(msg1);
+    refreshLCD(msg, msg1, true, 500);
+  }
+
 }
 
