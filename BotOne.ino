@@ -159,49 +159,37 @@ void Bot::setTurnSpeed(int turnSpeed, int linearSpeed) {
 }
 //--------------------------------------RAMP FWD/BACK -----------------------------------------//
 void Bot::rampFwd(int time) {
-  if (debug > 0) {
-    Serial.print("Initiate RAMP FWD: ");
-    Serial.println(time);
-  }
+  if (debug > 0) { Serial.print("Initiate RAMP FWD: "); Serial.println(time); }
   unsigned long currentTime = millis();
   if (!alreadyRampedFwd) {
     for (int speedChg = 0; speedChg <= maxSpeedChg; speedChg += rampIncrement) {
       updateSensors();
       if (!obstaclePresent()) {
-        
         servoLeft.writeMicroseconds(standStillMicros + speedChg);
-        if (debug > 2) {
-          Serial.print("servoLeft: ");
-          Serial.print(standStillMicros + speedChg);
-        }
+        if (debug > 2) { Serial.print("servoLeft: "); Serial.print(standStillMicros + speedChg); }
         servoRight.writeMicroseconds(standStillMicros - speedChg);
-        if (debug > 2) {
-          Serial.print("; servoRight: ");
-          Serial.println(standStillMicros - speedChg);
-        }
+        if (debug > 2) { Serial.print("; servoRight: "); Serial.println(standStillMicros - speedChg); }
         delay(servoPulseMillis);
       } //end ramping, maintain top speed
       alreadyRampedFwd = true;
     }
   }
-  while ((millis() - currentTime < time - servoPulseMillis * (maxSpeedChg / rampIncrement)) && !obstaclePresent()) { // run for specified time less ramp time
+  // run for specified time less ramp time
+  while ((millis() - currentTime < time - servoPulseMillis * (maxSpeedChg / rampIncrement)) && !obstaclePresent()) { 
     updateSensors();
     delay(servoPulseMillis);
   }
-  //standStill();
 }
 void Bot::rampBack(int time) {
-  if (debug > 0) {
-    Serial.print("Initiate RAMP BACK: ");
-    Serial.println(time);
-  }
+  if (debug > 0) { Serial.print("Initiate RAMP BACK: "); Serial.println(time); }
   unsigned long currentTime = millis();
   for (int speedChg = 0; speedChg <= 100; speedChg += rampIncrement) {
     servoLeft.writeMicroseconds(standStillMicros - speedChg);
     servoRight.writeMicroseconds(standStillMicros + speedChg);
     delay(servoPulseMillis);
   }
-  while ((millis() - currentTime < time - servoPulseMillis * (100 / rampIncrement))) { // run for specified time less ramp time
+ // run for specified time less ramp time
+  while ((millis() - currentTime < time - servoPulseMillis * (100 / rampIncrement))) {
     updateSensors();
     delay(servoPulseMillis);
   }
@@ -260,7 +248,7 @@ void Bot::turnRight(int deg) {
     Serial.print(";   Old heading: "); Serial.print(originalHeading);
     Serial.print(";   Target heading: "); Serial.println(targetHeading);
   }
-  while (abs(getHeading() - targetHeading) > tolerance) {
+  while (abs(getHeading() - targetHeading) > tolerance || abs(getHeading() - targetHeading) < 360 - tolerance) {
     if (debug > 1) { Serial.print("headingDiff: "); Serial.println(abs(getHeading() - targetHeading)); }
     servoLeft.writeMicroseconds(slowSpeedCounterClockwiseMicros);
     servoRight.writeMicroseconds(slowSpeedCounterClockwiseMicros);
@@ -288,17 +276,19 @@ void Bot::turnLeft(int deg) {
 void Bot::updateMotion() {
   while (obstacleLeft || irObstacle) {
     rampBack(1000);
-    turnRight(90);
+    turnRight(OBSTACLE_AVOIDANCE_TURN);
     updateSensors();
   }
   while (obstacleRight) {
     rampBack(1500);
-    turnLeft(90);
+    turnLeft(OBSTACLE_AVOIDANCE_TURN);
     updateSensors();
   }
+  /*
   while (!obstaclePresent()) {
     rampFwd(3000);
   }
+  */
 }
 
 
@@ -309,16 +299,10 @@ void Bot::updateSensors() {
   irObstacleDistance = irAvgDistance(irSampleSize);
   if (irObstacleDistance <= minIRObstacleDistance) {
     irObstacle = true;
-    if (debug > 0) {
-      Serial.print("IR Obstacle Distance: ");
-      Serial.println(irObstacleDistance);
-    } 
+    if (debug > 0) { Serial.print("IR Obstacle Distance: "); Serial.println(irObstacleDistance); } 
   } else {
     irObstacle = false;
-      if (debug > 3) {
-        Serial.print("IR Obstacle Distance: ");
-        Serial.println(irObstacleDistance);
-      } 
+    if (debug > 3) { Serial.print("IR Obstacle Distance: "); Serial.println(irObstacleDistance); } 
   }
   
   // Update Whisker sensor states
@@ -349,31 +333,20 @@ void Bot::updateIndicators() {
 }
 void Bot::moveServoSensor(int degreePosition) {
   if (degreePosition >= servoSensorPositionOld) {
-    for(int i = servoSensorPositionOld; i < degreePosition; i++)  
-    {                                   
+    for(int i = servoSensorPositionOld; i < degreePosition; i++) {                                   
       servoSensor.write(i); 
-      if (debug > 2) {     
-        Serial.print("Wrote to servoSensor: ");
-        Serial.println(i);
-      }
+      if (debug > 2) { Serial.print("Wrote to servoSensor: "); Serial.println(i); }
       delay(servoSensorDelay);                       
     } 
   } else if (degreePosition < servoSensorPositionOld) {
-    for(int i = servoSensorPositionOld; i > degreePosition; i--)     
-    {                                
+    for(int i = servoSensorPositionOld; i > degreePosition; i--) {                                
       servoSensor.write(i);               
-      if (debug > 2) {
-        Serial.print("Wrote to servoSensor: ");
-        Serial.println(i);
-      }
+      if (debug > 2) { Serial.print("Wrote to servoSensor: "); Serial.println(i); }
       delay(servoSensorDelay);                    
     } 
   }
   servoSensorPositionOld = degreePosition;
-  if (debug > 0) {
-    Serial.print("Wrote to servoSensor: ");
-    Serial.println(degreePosition);
-  }
+  if (debug > 0) { Serial.print("Wrote to servoSensor: "); Serial.println(degreePosition); }
 }
 void Bot::displayLSM303Details() {
   sensor_t sensor;
@@ -518,16 +491,16 @@ void loop() {
   }
   bot->setLinearSpeed(linearSpeed);
   bot->setTurnSpeed(turnSpeed, linearSpeed);
-  /*
+  
   bot->updateSensors();
   if (bot->irObstacleDistance < 300) {
     tone(piezoSpeakerPin, map(bot->irObstacleDistance, 0, 300, 3000, 50), 300); //pin, Hz, millis
     // @TODO - very rough test - replace later
-    msg = "obstacle:" + String(bot->irObstacleDistance) + "mm; turn " + OBSTACLE_AVOIDANCE_TURN + "deg";
+    msg = "obstacle:" + String(bot->irObstacleDistance) + "mm; turn " + OBSTACLE_AVOIDANCE_TURN + "*";
     sendToRemote(msg, 100);
     bot->turnRight(OBSTACLE_AVOIDANCE_TURN);
   }
-  */
+  
 
 }
 

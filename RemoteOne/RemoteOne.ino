@@ -86,11 +86,43 @@ String readInputState() {
 //======================================== INITIALIZATION =====================================
 SoftwareSerial xbeeSerial(ssRX, ssTX); // RX, TX
 XBee xbee = XBee();
+XBeeResponse response = XBeeResponse();
+Rx16Response rx16 = Rx16Response();
+TxStatusResponse txStatus = TxStatusResponse();
 LiquidTWI lcd(0);
 String msg = "";
 String msg1 = "";
 unsigned long lastLCDRefresh = millis();
 unsigned long lastTransmission = millis();
+
+//======================================== XBEE HELPERS =======================================
+void sendToBot(uint8_t* payload, long transmissionInterval) {
+  if (millis() - lastTransmission > transmissionInterval) {
+    Tx16Request tx = Tx16Request(BOT_XBEE_16ADDR, payload, sizeof(payload));
+    xbee.send(tx);
+    lastTransmission = millis();
+  }
+}
+void receiveFromBot(uint8_t* data, uint8_t* dataLength) {
+  xbee.readPacket();
+  if (xbee.getResponse().isAvailable()) { 
+    if (xbee.getResponse().getApiId() == TX_STATUS_RESPONSE) {
+      xbee.getResponse().getZBTxStatusResponse(txStatus);
+      if (txStatus.getStatus() == SUCCESS && debug > 2) Serial.println("SUCCESS");
+      else if (txStatus.getStatus() != SUCCESS && debug > 0) Serial.println("TX ERROR");
+    } else if (xbee.getResponse().getApiId() == RX_16_RESPONSE) {
+      xbee.getResponse().getRx16Response(rx16);
+      uint8_t option = 0;
+      uint8_t xbeeRxData[rx16.getDataLength()];
+      if (debug > 2) { Serial.print("Rx Data Length: "); Serial.println(rx16.getDataLength()); }
+      option = rx16.getOption();
+      (*dataLength) = rx16.getDataLength();
+      for (int i = 0; i < rx16.getDataLength(); i++) data[i] = rx16.getData(i);
+    }
+  } else if (xbee.getResponse().isError()) {
+    if (debug > 0) { String msg = "Pkt read err: " + String(xbee.getResponse().getErrorCode()); Serial.println(msg); }
+  }
+}
 //========================================  LCD HELPERS =======================================
 String bufferSpaces(String message) {
   int len = LCD_BUFFER - message.length();
@@ -111,40 +143,6 @@ void refreshLCD(String line0, String line1, bool clearLCD, long refreshInterval)
     lastLCDRefresh = millis();
   }
 }
-//======================================== XBEE HELPERS =======================================
-void sendToBot(uint8_t* payload, long transmissionInterval) {
-  if (millis() - lastTransmission > transmissionInterval) {
-    Tx16Request tx = Tx16Request(BOT_XBEE_16ADDR, payload, sizeof(payload));
-    xbee.send(tx);
-    lastTransmission = millis();
-  }
-}
-void receiveFromBot(uint8_t* data, uint8_t* dataLength) {
-  //if (xbee.readPacket(100)) {
-    xbee.readPacket();
-    if (xbee.getResponse().isAvailable()) { 
-      if (xbee.getResponse().getApiId() == TX_STATUS_RESPONSE) {
-        TxStatusResponse txStatus = TxStatusResponse();
-        xbee.getResponse().getZBTxStatusResponse(txStatus);
-        if (txStatus.getStatus() == SUCCESS && debug > 2) Serial.println("SUCCESS");
-        else if (txStatus.getStatus() != SUCCESS && debug > 0) Serial.println("TX ERROR");
-      } else if (xbee.getResponse().getApiId() == RX_16_RESPONSE) {
-        XBeeResponse response = XBeeResponse();
-        Rx16Response rx16 = Rx16Response();
-        xbee.getResponse().getRx16Response(rx16);
-        uint8_t option = 0;
-        uint8_t xbeeRxData[rx16.getDataLength()];
-        if (debug > 2) { Serial.print("Rx Data Length: "); Serial.println(rx16.getDataLength()); }
-        option = rx16.getOption();
-        (*dataLength) = rx16.getDataLength();
-        for (int i = 0; i < rx16.getDataLength(); i++) data[i] = rx16.getData(i);
-      }
-    } else if (xbee.getResponse().isError()) {
-      if (debug > 0) { String msg = "Pkt read err: " + String(xbee.getResponse().getErrorCode()); Serial.println(msg); }
-    }
-  //}
-}
-
 //======================================== SETUP() ============================================
 void setup() {
   Serial.begin(SERIAL_BAUD);
@@ -166,7 +164,6 @@ void loop() {
   int xV = map(analogRead(PIN_ANALOG_X), 0, 1024, 0, 255);
   int yV = map(analogRead(PIN_ANALOG_Y), 0, 1024, 0, 255); 
   msg = "X:" + String(xV) + "; Y:" + String(yV);
-
   
   uint8_t payload[2] = {xV, yV};
   sendToBot(payload, 100);
