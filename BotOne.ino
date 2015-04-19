@@ -9,8 +9,7 @@
 #include "pitches.h"
 
 #define STAND_STILL_MICROS 1500
-#define SERIAL_BAUD 57600
-#define HAS_WHISKERS
+#define SERIAL_BAUD 9600
 #define MAGNETOMETER_ID 8780
 #define ARDUINO_REMOTE
 #define REMOTE_XBEE_16ADDR 0x0001
@@ -18,28 +17,26 @@
 
 //======================================== GLOBALS ====================================================
 const float Pi = 3.14159;
-const int debug = 2;   // debug level. 1 is basic/info; 3 is details from within loops
+const int debug = 3;   // debug level. 1 is basic/info; 3 is details from within loops
 
 #ifndef BOT_H_
 #define BOT_H_
 
-const bool hasWhiskers = false; // whether whiskers are on or not;
-
+//======================================== PIN ASSIGNMENTS - DIGITAL ==================================
+const uint8_t ssRX = 3; //Soft Serial RX Pin
+const uint8_t ssTX = 2; //SoftSerial TX Pin
 const uint8_t piezoSpeakerPin = 4;
-
-// Only needed if Bot has whiskers
-const uint8_t whiskerLeftPin = 5;
-const uint8_t whiskerRightPin = 7;
-const uint8_t whiskerLeftIndicatorPin = 8;
-const uint8_t whiskerRightIndicatorPin = 2;
-
+const uint8_t sonarPWPin = 6;
 const uint8_t servoSensorPin = 10;
 const uint8_t servoLeftPin = 11;
 const uint8_t servoRightPin = 12;
-const uint8_t irSensorPin = A0;
-const uint8_t ssRX = 3; //Soft Serial RX Pin
-const uint8_t ssTX = 2; //SoftSerial TX Pin
 
+//======================================== PIN ASSIGNMENTS - ANALOG ===================================
+const uint8_t irSensorPin = A0;
+const uint8_t sonarANPin = A1;
+const uint8_t sonarRXPin = A2;
+
+//======================================== KEY OPERATING PARAMETERS ===================================
 const int rampIncrement = 5;
 
 const int servoPulseMillis = 20;
@@ -50,26 +47,36 @@ const int slowSpeedClockwiseMicros = 1470;
 const int slowSpeedCounterClockwiseMicros = 1530;
 const int maxSpeedChg = 100;
 const int servoSensorDelay = 0;
-const int minIRObstacleDistance = 350; // millimeters
+const int minIRObstacleDistance = 250; // millimeters
+const int minSonarObstacleDistance = 250; // millimeters
 const int irSampleSize = 10;
+const int sonarSampleSize = 10;
 const float headingPrecision = 5.0;
-const int tolerance = 10; // ABS(speed) below this value do not induce motion, also deg for turns
+const int tolerance = 10; // ABS(speed) below this value does not induce motion, also deg for turns
 //======================================== END GLOBALS =================================================
 
 
-//----------------------------- BEGIN IR Sensor GP2Y0A02YK Readout functions ---------------------------
+//----------------------------- IR Sensor GP2Y0A02YK Readout functions ---------------------------
 // Convert IR Sensor GP2Y0A02YK Voltage read to millimeters
 int convertIRvoltsToMM(float v) { 
-    return -0.00003983993846*v*v*v+ 0.0456899769 *v*v - 17.48535575 * v + 2571.052715; 
+    return -0.00003983993846*v*v*v+ 0.0456899769*v*v - 17.48535575*v + 2571.052715; 
 }
 // Return average distance in millimeters based on defined number of samples
 int irAvgDistance(int numSamples) {
   float irSum = 0.0;
-  for (int i = 0; i < numSamples; i++) irSum += analogRead(irSensorPin);
+  for (int i = 0; i < numSamples; i++) { irSum += analogRead(irSensorPin); delay(1); }
   return convertIRvoltsToMM(irSum / float(numSamples));
 }
-//----------------------------- END IR Sensor GP2Y0A02YK Readout functions -----------------------------
-
+//----------------------------- Sonar  Maxbotix LV-EZ3 Readout functions -----------------------------
+int convertSonarVoltsToMM(float v) {
+  return 0.0179*v*v*v - 1.1553*v*v + 39.334*v - 101.28;
+  //return int(v);
+}
+int sonarAvgDistance(int numSamples) {
+  float sonarSum = 0.0;
+  for (int i = 0; i < numSamples; i++) { sonarSum += analogRead(sonarANPin); delay(1); }
+  return convertSonarVoltsToMM(sonarSum / float(numSamples));
+}
 
 
 class Bot {
@@ -77,9 +84,8 @@ class Bot {
     Adafruit_LSM303_Mag_Unified mag;
     int servoSensorPosition, servoSensorPositionOld;
     int servoLeftcurrentSpeed, servoRightCurrentSpeed;
-    byte whiskerLeftState, whiskerRightState;
-    bool obstacleLeft, obstacleRight, irObstacle, alreadyRampedFwd;
-    int irObstacleDistance;
+    bool sonarObstacle, irObstacle, alreadyRampedFwd;
+    int sonarObstacleDistance, irObstacleDistance;
     Servo servoLeft, servoRight, servoSensor;
     
     Bot();
@@ -120,20 +126,15 @@ Bot::Bot() {
   servoRight.attach(servoRightPin);
   servoLeftcurrentSpeed = standStillMicros;
   servoRightCurrentSpeed = standStillMicros;
-  obstacleLeft = false;
-  obstacleRight = false;
+  sonarObstacle = false;
   irObstacle = false;
   alreadyRampedFwd = false;
+  sonarObstacleDistance = 65534;
   irObstacleDistance = 65534;
   servoSensorPosition = 90;
   servoSensorPositionOld = 90;
   pinMode(irSensorPin, INPUT);
-  if(hasWhiskers) {
-    pinMode(whiskerLeftPin, INPUT);
-    pinMode(whiskerRightPin, INPUT);
-    pinMode(whiskerLeftIndicatorPin, OUTPUT);
-    pinMode(whiskerRightIndicatorPin, OUTPUT);
-  }
+  pinMode(sonarANPin, INPUT);
 }
 //-------------------------------------- LINEAR AND TURN SPEED -------------------------------//
 void Bot::setLinearSpeed(int linearSpeed) { //needs to be in -100 to 100 range
@@ -274,21 +275,11 @@ void Bot::turnLeft(int deg) {
 }
 //---------------------------------------------MOTION UPDATE-----------------------------------------//
 void Bot::updateMotion() {
-  while (obstacleLeft || irObstacle) {
+  while (obstaclePresent()) {
     rampBack(1000);
     turnRight(OBSTACLE_AVOIDANCE_TURN);
     updateSensors();
   }
-  while (obstacleRight) {
-    rampBack(1500);
-    turnLeft(OBSTACLE_AVOIDANCE_TURN);
-    updateSensors();
-  }
-  /*
-  while (!obstaclePresent()) {
-    rampFwd(3000);
-  }
-  */
 }
 
 
@@ -304,31 +295,16 @@ void Bot::updateSensors() {
     irObstacle = false;
     if (debug > 3) { Serial.print("IR Obstacle Distance: "); Serial.println(irObstacleDistance); } 
   }
-  
-  // Update Whisker sensor states
-  // @TODO - replace polling with interrupts - digital pin 2,3 for Uno
-  if (hasWhiskers) {
-    whiskerLeftState = digitalRead(whiskerLeftPin);
-    whiskerRightState = digitalRead(whiskerRightPin);
-    if (whiskerLeftState == 0) {
-      digitalWrite(whiskerLeftIndicatorPin, HIGH);
-      obstacleLeft = true;
-      if (debug > 0) Serial.println("Obstacle on Left encountered!");
-    } else {
-      digitalWrite(whiskerLeftIndicatorPin, LOW);
-      obstacleLeft = false;
-    }
-    if (whiskerRightState == 0) {
-      digitalWrite(whiskerRightIndicatorPin, HIGH);
-      obstacleRight = true;
-      if (debug > 0) Serial.println("Obstacle on Right encountered!");
-    } else {
-      digitalWrite(whiskerRightIndicatorPin, LOW);
-      obstacleRight = false;
-    }
+  sonarObstacleDistance = sonarAvgDistance(sonarSampleSize);
+  if (sonarObstacleDistance <= minSonarObstacleDistance) {
+    sonarObstacle = true;
+    if (debug > 0) { Serial.print("SONAR Obstacle Distance: "); Serial.println(sonarObstacleDistance); } 
+  } else {
+    sonarObstacle = false;
+    if (debug > 3) { Serial.print("SONAR Obstacle Distance: "); Serial.println(sonarObstacleDistance); } 
   }
 }
-bool Bot::obstaclePresent() { return obstacleLeft || obstacleRight || irObstacle; }
+bool Bot::obstaclePresent() { return sonarObstacle || irObstacle; }
 void Bot::updateIndicators() {
 }
 void Bot::moveServoSensor(int degreePosition) {
@@ -360,7 +336,6 @@ void Bot::displayLSM303Details() {
   Serial.print  ("Resolution:   "); Serial.print(sensor.resolution); Serial.println(" uT");  
   Serial.println("------------------------------------");
   Serial.println("");
-  delay(500);
 }
 
 int Bot::getHeading() {
@@ -368,10 +343,7 @@ int Bot::getHeading() {
   mag.getEvent(&event);
   float heading = (atan2(event.magnetic.y,event.magnetic.x) * 180) / Pi; // Calculate the angle of the vector y,x
   if (heading < 0) heading = 360 + heading;  // Normalize to 0-360
-  if (debug > 4) {
-    Serial.print("Compass Heading: ");
-    Serial.println(int(heading)); 
-  }
+  if (debug > 4) { Serial.print("Compass Heading: "); Serial.println(int(heading)); }
   return int(heading);
 }
 void Bot::startupChime() {
@@ -404,14 +376,11 @@ unsigned long lastTransmission = millis();
 //=========================================== XBEE HELPERS ======================================
 
 void updateJoystickValues(int *xV, int *yV) {
+  (*xV) = 128;
+  (*yV) = 128;
   xbee.readPacket();
   if (xbee.getResponse().isAvailable()) {
-    if (xbee.getResponse().getApiId() == TX_STATUS_RESPONSE) {
-      TxStatusResponse txStatus = TxStatusResponse();
-      xbee.getResponse().getZBTxStatusResponse(txStatus);
-      if (txStatus.getStatus() == SUCCESS && debug > 2) Serial.println("SUCCESS");
-      else if (txStatus.getStatus() != SUCCESS && debug > 0) Serial.println("TX ERROR");
-    } else if (xbee.getResponse().getApiId() == RX_16_RESPONSE) {
+    if (xbee.getResponse().getApiId() == RX_16_RESPONSE) {
       xbee.getResponse().getRx16Response(rx16);
       xbeeRxOption = rx16.getOption();
       xbeeRxData[0] = rx16.getData(0);
@@ -421,6 +390,11 @@ void updateJoystickValues(int *xV, int *yV) {
       if (debug > 1) {
         msg = "xBee RFrx Data: "+ String(xbeeRxData[0]) + ", "+ String(xbeeRxData[1]); Serial.println(msg);
       }  
+    } else if (xbee.getResponse().getApiId() == TX_STATUS_RESPONSE) {
+      TxStatusResponse txStatus = TxStatusResponse();
+      xbee.getResponse().getZBTxStatusResponse(txStatus);
+      if (txStatus.getStatus() == SUCCESS && debug > 2) Serial.println("SUCCESS");
+      else if (txStatus.getStatus() != SUCCESS && debug > 0) Serial.println("TX ERROR");
     }
    #ifndef ARDUINO_REMOTE 
     else if (xbee.getResponse().getApiId() == RX_16_IO_RESPONSE) {
@@ -460,6 +434,7 @@ void sendToRemote(String msg, long transmissionInterval) {
     msg.getBytes(payload, msg.length());
     Tx16Request tx = Tx16Request(REMOTE_XBEE_16ADDR, payload, sizeof(payload));
     xbee.send(tx);
+    if (debug > 2) { Serial.print("Sent MSG to Remote: "); Serial.println(msg); }
     lastTransmission = millis();
   }
 }
@@ -471,8 +446,9 @@ void setup() {
   Serial.begin(SERIAL_BAUD); // Terminal
   xbeeSerial.begin(SERIAL_BAUD); // xBee
   xbee.setSerial(xbeeSerial);
+  xbee.begin(xbeeSerial);
+  delay(15000);
   if (debug > 1) bot->displayLSM303Details();
-
 }
 
 //======================================== LOOP() ============================================
@@ -483,24 +459,26 @@ int xV, yV; // x and y values read from remote control joystick via xBee
 
 void loop() {
   updateJoystickValues(&xV, &yV);
-  int linearSpeed = map(yV, 0, 255, -100, 100);
-  int turnSpeed   = map(xV, 0, 255, -100, 100);
+  int linearSpeed = map(yV, 0, 254, -100, 100);
+  int turnSpeed   = map(xV, 1, 253, -100, 100);
   if (debug > 0) {
-    msg = "turn:" + String(turnSpeed) + ";linear:"+ String(linearSpeed) + " "; Serial.println(msg);
-    sendToRemote(msg, 100);
+    msg = "turn:" + String(turnSpeed) + ";lin:"+ String(linearSpeed) + " "; //Serial.println(msg);
+    sendToRemote(msg, 200);
   }
   bot->setLinearSpeed(linearSpeed);
   bot->setTurnSpeed(turnSpeed, linearSpeed);
   
-  bot->updateSensors();
+  //bot->updateSensors();
+  /*
   if (bot->irObstacleDistance < 300) {
     tone(piezoSpeakerPin, map(bot->irObstacleDistance, 0, 300, 3000, 50), 300); //pin, Hz, millis
     // @TODO - very rough test - replace later
-    msg = "obstacle:" + String(bot->irObstacleDistance) + "mm; turn " + OBSTACLE_AVOIDANCE_TURN + "*";
+    msg = "obstacle:" + String(bot->irObstacleDistance) + "mm; turn " + OBSTACLE_AVOIDANCE_TURN + "*"; 
+    Serial.println(msg);
     sendToRemote(msg, 100);
     bot->turnRight(OBSTACLE_AVOIDANCE_TURN);
   }
-  
+  */
 
 }
 
