@@ -6,6 +6,8 @@
  LCD circuit:
  * CLK to Analog #5
  * DAT to Analog #4
+ 
+ BRANCH 2 - comm debug
 */
   
 #include <SoftwareSerial.h>
@@ -14,7 +16,7 @@
 #include <LiquidTWI.h>
 
 #define XBEE_SHIELD
-#define SERIAL_BAUD 9600
+#define SERIAL_BAUD 57600
 #define BOT_XBEE_16ADDR 0x0002
 #define LCD_BUFFER 40
 #define MAX_DATA_PAYLOAD 200
@@ -87,9 +89,6 @@ String readInputState() {
 //======================================== INITIALIZATION =====================================
 SoftwareSerial xbeeSerial(ssRX, ssTX); // RX, TX
 XBee xbee = XBee();
-XBeeResponse response = XBeeResponse();
-Rx16Response rx16 = Rx16Response();
-TxStatusResponse txStatus = TxStatusResponse();
 LiquidTWI lcd(0);
 String msg = "";
 String msg1 = "";
@@ -98,10 +97,12 @@ unsigned long lastTransmission = millis();
 
 //======================================== XBEE HELPERS =======================================
 void receiveFromBot(uint8_t* data, long* dataLength) {
+  XBeeResponse response = XBeeResponse();
   xbee.readPacket();
   xbee.getResponse(response);
   if (response.isAvailable()) { 
-    if (response.getApiId() == RX_16_RESPONSE || true) {
+    if (response.getApiId() == RX_16_RESPONSE) {
+      Rx16Response rx16 = Rx16Response();
       response.getRx16Response(rx16);
       if (debug > 2) { Serial.print("Rx Data Length: "); Serial.println(rx16.getDataLength()); }
       long limitedLength = min(rx16.getDataLength(), MAX_DATA_PAYLOAD);
@@ -110,6 +111,7 @@ void receiveFromBot(uint8_t* data, long* dataLength) {
       (*dataLength) = limitedLength;
       for (int i = 0; i < limitedLength; i++) data[i] = rx16.getData(i);
     } else if (response.getApiId() == TX_STATUS_RESPONSE) {
+      TxStatusResponse txStatus = TxStatusResponse();
       response.getZBTxStatusResponse(txStatus);
       if (txStatus.getStatus() == SUCCESS && debug > 2) Serial.println("SUCCESS");
       else if (txStatus.getStatus() != SUCCESS && debug > 0) Serial.println("TX ERROR");
@@ -178,7 +180,7 @@ void loop() {
   msg = "X:" + String(xV) + "; Y:" + String(yV);
   
   uint8_t payload[2] = {xV, yV};
-  sendToBot(payload, 200);
+  sendToBot(payload, 1000);
 
   uint8_t data[MAX_DATA_PAYLOAD]; 
   long dataLength = 0;

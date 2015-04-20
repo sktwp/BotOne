@@ -1,4 +1,4 @@
-// Motion/Sensor test platform - Arduino Uno R3
+// Motion/Sensor test platform - Arduino Uno R3 - BRANCH 2 - comm debug
 
 #include <Adafruit_LSM303_U.h>
 #include <Adafruit_Sensor.h>
@@ -9,7 +9,7 @@
 #include "pitches.h"
 
 #define STAND_STILL_MICROS 1500
-#define SERIAL_BAUD 9600
+#define SERIAL_BAUD 57600
 #define MAGNETOMETER_ID 8780
 #define ARDUINO_REMOTE
 #define REMOTE_XBEE_16ADDR 0x0001
@@ -365,23 +365,23 @@ void Bot::startupChime() {
 Bot *bot;
 SoftwareSerial xbeeSerial(ssRX, ssTX);
 XBee xbee = XBee();
-XBeeResponse response = XBeeResponse();
-Rx16Response rx16 = Rx16Response();
-Rx16IoSampleResponse ioSample = Rx16IoSampleResponse();
 uint8_t xbeeRxOption = 0;
-uint8_t xbeeRxData[2];
+uint8_t xbeeRxData[2] = {128, 128};
 String msg = "";
 unsigned long lastTransmission = millis();
 
 //=========================================== XBEE HELPERS ======================================
 
 void updateJoystickValues(int *xV, int *yV) {
-  (*xV) = 128;
-  (*yV) = 128;
+  //(*xV) = 128;
+  //(*yV) = 128;
+  XBeeResponse response = XBeeResponse();
   xbee.readPacket();
-  if (xbee.getResponse().isAvailable()) {
-    if (xbee.getResponse().getApiId() == RX_16_RESPONSE) {
-      xbee.getResponse().getRx16Response(rx16);
+  xbee.getResponse(response);
+  if (response.isAvailable()) {
+    if (response.getApiId() == RX_16_RESPONSE) {
+      Rx16Response rx16 = Rx16Response();
+      response.getRx16Response(rx16);
       xbeeRxOption = rx16.getOption();
       xbeeRxData[0] = rx16.getData(0);
       xbeeRxData[1] = rx16.getData(1);
@@ -390,15 +390,16 @@ void updateJoystickValues(int *xV, int *yV) {
       if (debug > 1) {
         msg = "xBee RFrx Data: "+ String(xbeeRxData[0]) + ", "+ String(xbeeRxData[1]); Serial.println(msg);
       }  
-    } else if (xbee.getResponse().getApiId() == TX_STATUS_RESPONSE) {
+    } else if (response.getApiId() == TX_STATUS_RESPONSE) {
       TxStatusResponse txStatus = TxStatusResponse();
-      xbee.getResponse().getZBTxStatusResponse(txStatus);
+      response.getZBTxStatusResponse(txStatus);
       if (txStatus.getStatus() == SUCCESS && debug > 2) Serial.println("SUCCESS");
       else if (txStatus.getStatus() != SUCCESS && debug > 0) Serial.println("TX ERROR");
     }
    #ifndef ARDUINO_REMOTE 
-    else if (xbee.getResponse().getApiId() == RX_16_IO_RESPONSE) {
-      xbee.getResponse().getRx16IoSampleResponse(ioSample);
+    else if (response.getApiId() == RX_16_IO_RESPONSE) {
+      Rx16IoSampleResponse ioSample = Rx16IoSampleResponse();
+      response.getRx16IoSampleResponse(ioSample);
       if (debug > 2) {
         Serial.print("Received I/O Sample from: "); Serial.println(ioSample.getRemoteAddress16(), HEX);  
         Serial.print("Sample size is "); Serial.println(ioSample.getSampleSize(), DEC);
@@ -446,8 +447,8 @@ void setup() {
   Serial.begin(SERIAL_BAUD); // Terminal
   xbeeSerial.begin(SERIAL_BAUD); // xBee
   xbee.setSerial(xbeeSerial);
-  xbee.begin(xbeeSerial);
-  delay(15000);
+  //xbee.begin(xbeeSerial);
+  delay(2000);
   if (debug > 1) bot->displayLSM303Details();
 }
 
@@ -462,8 +463,8 @@ void loop() {
   int linearSpeed = map(yV, 0, 254, -100, 100);
   int turnSpeed   = map(xV, 1, 253, -100, 100);
   if (debug > 0) {
-    msg = "turn:" + String(turnSpeed) + ";lin:"+ String(linearSpeed) + " "; //Serial.println(msg);
-    sendToRemote(msg, 200);
+    msg = "turn:" + String(xV) + ";lin:"+ String(yV) + " "; //Serial.println(msg);
+    sendToRemote(msg, 1000);
   }
   bot->setLinearSpeed(linearSpeed);
   bot->setTurnSpeed(turnSpeed, linearSpeed);
